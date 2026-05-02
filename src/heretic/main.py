@@ -17,11 +17,15 @@ def _is_help_invocation() -> bool:
 if _is_help_invocation():
     Settings()  # ty:ignore[missing-argument]
 
+# FIXME: Rich progress bars are currently disabled because of rendering issues
+#        when used from multiple threads in parallel (e.g. by huggingface_hub).
+"""
 from .progress import patch_tqdm
 
 # This patches tqdm class definitions, which must happen
 # before any other module imports tqdm.
 patch_tqdm()
+"""
 
 import logging
 import math
@@ -127,31 +131,26 @@ def obtain_merge_strategy(settings: Settings, model: Model) -> str | None:
             )
         print()
 
-        strategy = prompt_select(
-            "How do you want to proceed?",
-            choices=[
-                Choice(
-                    title="Merge LoRA into full model"
-                    + (
-                        ""
-                        if settings.quantization == QuantizationMethod.NONE
-                        else " (requires sufficient RAM)"
-                    ),
-                    value="merge",
+    strategy = prompt_select(
+        "How do you want to proceed?",
+        choices=[
+            Choice(
+                title="Merge LoRA into full model"
+                + (
+                    ""
+                    if settings.quantization == QuantizationMethod.NONE
+                    else " (requires sufficient RAM)"
                 ),
-                Choice(
-                    title="Cancel",
-                    value="cancel",
-                ),
-            ],
-        )
+                value="merge",
+            ),
+            Choice(
+                title="Save LoRA adapter only (can be merged later)",
+                value="adapter",
+            ),
+        ],
+    )
 
-        if strategy == "cancel":
-            return None
-
-        return strategy
-    else:
-        return "merge"
+    return strategy
 
 
 def run():
@@ -425,9 +424,6 @@ def run():
 
     needs_full_residuals = settings.print_residual_geometry or settings.plot_residuals
 
-    good_residuals = None
-    bad_residuals = None
-
     if needs_full_residuals:
         print("* Obtaining residuals for good prompts...")
         good_residuals = model.get_residuals_batched(good_prompts)
@@ -465,8 +461,12 @@ def run():
             refusal_directions - projection_vector.unsqueeze(1) * good_directions
         )
         refusal_directions = F.normalize(refusal_directions, p=2, dim=1)
+        del good_directions, projection_vector
+
+    del good_means, bad_means
 
     # Clear cache before starting the optimization study.
+    # This should free up memory from the objects released with the del statements above.
     empty_cache()
 
     trial_index = 0
